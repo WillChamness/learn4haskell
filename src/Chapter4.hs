@@ -73,6 +73,8 @@ can't write the following function:
 foo :: Maybe -> Int
 @
 
+-}
+{-
 It is invalid, because "Maybe" needs some type parameters. In some
 sense, you can look at "Maybe" as a function on type-level from types
 to types: you give "Maybe" some type, and you get a concrete type in
@@ -113,22 +115,30 @@ As always, try to guess the output first! And don't forget to insert
 the output in here:
 
 >>> :k Char
+Char :: *
 
 >>> :k Bool
+Bool :: *
 
 >>> :k [Int]
+[Int] :: *
 
 >>> :k []
+[] * -> *
 
 >>> :k (->)
+(->) :: * -> * -> *
 
 >>> :k Either
+Either :: * -> * -> *
 
 >>> data Trinity a b c = MkTrinity a b c
 >>> :k Trinity
+Trinity :: * -> * -> * -> *
 
 >>> data IntBox f = MkIntBox (f Int)
 >>> :k IntBox
+IntBox :: (* -> *) -> *
 
 -}
 
@@ -262,8 +272,8 @@ name.
 @
 instance Functor Maybe where
     fmap :: (a -> b) -> Maybe a -> Maybe b
-    fmap f (Just a) = Just (f a)
-    fmap _ x = x
+    fmap f (Just a) = Just (f a) -- Output type is Maybe b
+    fmap _ x = x -- Output type is Maybe a, does not match function signature
 @
 -}
 
@@ -281,7 +291,6 @@ data Secret e a
     | Reward a
     deriving (Show, Eq)
 
-
 {- |
 Functor works with types that have kind `* -> *` but our 'Secret' has
 kind `* -> * -> *`. What should we do? Don't worry. We can partially
@@ -292,7 +301,8 @@ values and apply them to the type level?
 -}
 instance Functor (Secret e) where
     fmap :: (a -> b) -> Secret e a -> Secret e b
-    fmap = error "fmap for Box: not implemented!"
+    fmap _ (Trap trap) = Trap trap
+    fmap f (Reward reward) = Reward (f reward)
 
 {- |
 =⚔️= Task 3
@@ -304,7 +314,12 @@ typeclasses for standard data types.
 -}
 data List a
     = Empty
-    | Cons a (List a)
+    | Cons a (List a) deriving Show
+
+instance Functor List where
+   fmap :: (a -> b) -> List a -> List b
+   fmap _ Empty = Empty
+   fmap f (Cons x xs) = Cons (f x) (fmap f xs)
 
 {- |
 =🛡= Applicative
@@ -317,6 +332,12 @@ class Functor f => Applicative f where
     pure :: a -> f a
     (<*>) :: f (a -> b) -> f a -> f b
 @
+
+pure a = Maybe a
+(<*>) Nothing _ = Nothing
+(<*>) _ Nothing = Nothing
+(<*>) (Just func) (Just val) = Just (func val)
+
 
 Wow, that's a lot going on again! Where did all these scary creatures
 come? But if we look closer, it all looks a bit familiar already.
@@ -346,7 +367,9 @@ context.
 
 And continuing the chest 'Functor' analogy here, we can notice that a
 chest is also an 'Applicative'! We can put anything we want inside our
-chest, and this is what "pure" does. Or, let's say, we have one chest
+chest, and this is what "pure" does. 
+
+Or, let's say, we have one chest
 with a key inside, and this key opens a very secret box inside another
 chest. We can take both chests, extract their content, and apply one
 to another (i.e. open the box with the key), extract the content of
@@ -401,7 +424,7 @@ instance Applicative Maybe where
 
     (<*>) :: Maybe (a -> b) -> Maybe a -> Maybe b
     Nothing <*> _ = Nothing
-    Just f <*> x = fmap f x
+    Just f <*> x = fmap f x -- fmap handles case when x is Nothing
 @
 
 So, even if the Applicative looks menacingly, there is Nothing scary
@@ -471,10 +494,11 @@ Implement the Applicative instance for our 'Secret' data type from before.
 -}
 instance Applicative (Secret e) where
     pure :: a -> Secret e a
-    pure = error "pure Secret: Not implemented!"
+    pure = Reward
 
     (<*>) :: Secret e (a -> b) -> Secret e a -> Secret e b
-    (<*>) = error "(<*>) Secret: Not implemented!"
+    (<*>) (Trap trap) _ = Trap trap
+    (<*>) (Reward f) secret = fmap f secret
 
 {- |
 =⚔️= Task 5
@@ -488,6 +512,21 @@ Implement the 'Applicative' instance for our 'List' type.
   type.
 -}
 
+instance Applicative List where
+   pure :: a -> List a
+   pure x = Cons x Empty
+
+   (<*>) :: List (a -> b) -> List a -> List b
+   (<*>) _ Empty = Empty
+   (<*>) Empty _ = Empty
+   (<*>) (Cons func funcs) xs = let
+         mappedValues = fmap func xs -- e.g. fmap (*2) [1,2,3] == [2,4,6]
+         everythingElse = funcs <*> xs -- e.g. apply (<*>) to [(+5), (*(-1)), ...] and [1,2,3]
+      in concatList mappedValues everythingElse
+      where
+         concatList :: List c -> List c -> List c
+         concatList Empty zs = zs
+         concatList (Cons y ys) zs = Cons y (concatList ys zs)
 
 {- |
 =🛡= Monad
@@ -599,7 +638,8 @@ Implement the 'Monad' instance for our 'Secret' type.
 -}
 instance Monad (Secret e) where
     (>>=) :: Secret e a -> (a -> Secret e b) -> Secret e b
-    (>>=) = error "bind Secret: Not implemented!"
+    (>>=) (Trap trap) _ = Trap trap
+    (>>=) (Reward reward) f = f reward
 
 {- |
 =⚔️= Task 7
@@ -609,6 +649,18 @@ Implement the 'Monad' instance for our lists.
 🕯 HINT: You probably will need to implement a helper function (or
   maybe a few) to flatten lists of lists to a single list.
 -}
+
+instance Monad List where
+   (>>=) :: List a -> (a -> List b) -> List b
+   (>>=) Empty _ = Empty
+   (>>=) (Cons x xs) f = let
+         wrappedResult = f x
+         everythingElse = xs >>= f
+      in concatList wrappedResult everythingElse
+      where
+         concatList :: List c -> List c -> List c
+         concatList Empty zs = zs 
+         concatList (Cons y ys) zs = Cons y (concatList ys zs)
 
 
 {- |
@@ -628,7 +680,7 @@ Can you implement a monad version of AND, polymorphic over any monad?
 🕯 HINT: Use "(>>=)", "pure" and anonymous function
 -}
 andM :: (Monad m) => m Bool -> m Bool -> m Bool
-andM = error "andM: Not implemented!"
+andM monad1 monad2 = monad1 >>= (\b1 -> monad2 >>= (\b2 -> pure (b1 && b2)))
 
 {- |
 =🐉= Task 9*: Final Dungeon Boss
@@ -670,6 +722,52 @@ Specifically,
    subtree of a tree
  ❃ Implement the function to convert Tree to list
 -}
+
+{-
+data List a = Empty | Cons a (List a) 
+ - -}
+
+
+data Tree a = NoTree | TreeCons a (Tree a) (Tree a) deriving Show
+
+treeInt :: Tree Int
+treeInt = TreeCons 1 (TreeCons 2 NoTree NoTree) (TreeCons 3 NoTree NoTree)
+
+instance Functor Tree where
+   fmap :: (a -> b) -> Tree a -> Tree b
+   fmap _ NoTree = NoTree
+   fmap f (TreeCons x left right) = TreeCons (f x) (fmap f left) (fmap f right)
+
+reverseTree :: Tree a -> Tree a
+reverseTree NoTree = NoTree
+reverseTree (TreeCons x left right) = TreeCons x (reverseTree right) (reverseTree left)
+
+-- preorder traversal
+treeToList :: Tree a -> List a
+treeToList NoTree = Empty
+treeToList (TreeCons x left right) = (Cons x Empty `concatList` treeToList left) `concatList` treeToList right
+   where
+      concatList :: List b -> List b -> List b
+      concatList Empty zs = zs
+      concatList (Cons y ys) zs = Cons y (concatList ys zs)
+
+-- inorder traversal
+treeToList' :: Tree a -> List a
+treeToList' NoTree = Empty
+treeToList' (TreeCons x left right) = (treeToList left `concatList` Cons x Empty) `concatList` treeToList right
+   where
+      concatList :: List b -> List b -> List b
+      concatList Empty zs = zs
+      concatList (Cons y ys) zs = Cons y (concatList ys zs)
+
+-- postorder traversal
+treeToList'' :: Tree a -> List a
+treeToList'' NoTree = Empty
+treeToList'' (TreeCons x left right) = (treeToList left `concatList` treeToList right) `concatList` Cons x Empty
+   where
+      concatList :: List b -> List b -> List b
+      concatList Empty zs = zs
+      concatList (Cons y ys) zs = Cons y (concatList ys zs)
 
 
 {-

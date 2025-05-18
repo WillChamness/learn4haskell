@@ -901,8 +901,8 @@ rewind' :: [a] -> [a]
 rewind' = go []
    where
       go :: [a] -> [a] -> [a]
-      go acc [] = acc
-      go acc (x:xs) =  go (x : acc) xs
+      go stack [] = stack
+      go stack (x:xs) = go (x : stack) xs
 
 
 {-
